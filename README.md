@@ -32,9 +32,52 @@ Two views: **Chat** (ask questions, get grounded answers with an expandable "How
 
 ## 🏗️ Architecture
 
-![architecture](/assets/architecture.svg)
-
 One FastAPI process serves both the static frontend and the API. Every chat message combines local ChromaDB retrieval with a live PubMed/ClinicalTrials.gov fetch and, when relevant, one of two small ML models — see [IMPLEMENTATION.md](IMPLEMENTATION.md) for the full breakdown.
+
+```mermaid
+flowchart TB
+    Browser["🖥️ Browser<br/>client/static/index.html"]
+
+    subgraph FastAPI["FastAPI app — single process (server/main.py)"]
+        Static["StaticFiles mount '/'<br/>serves index.html"]
+        Routes["api/routes.py<br/>/chat · /vector_store/* · /auth/* · /chat_sessions/* · /upload_and_process_pdfs"]
+
+        subgraph Core["Core modules"]
+            VDB["vector_database.py<br/>Embeddings + ChromaDB ops, caching"]
+            LLMChain["llm_chain_factory.py<br/>RAG + agent orchestration, LLM call"]
+            Agent["agent_tools.py<br/>Live fetch, ML triggers"]
+            ML["ml_tools.py<br/>Severity + phase models"]
+            Auth["auth.py / auth_db.py<br/>Sessions, account-linked history"]
+        end
+    end
+
+    subgraph Storage["Persistent storage"]
+        Chroma[("ChromaDB<br/>80k+ chunks")]
+        SQLite[("SQLite — app.db<br/>users, chat history")]
+        Models["ml/models/<br/>*.pkl, *.pt"]
+    end
+
+    subgraph External["External services (over the internet)"]
+        LLMAPI["Groq API / Gemini API<br/>LLM inference"]
+        PubMed["PubMed / ClinicalTrials.gov<br/>live fetch, run in parallel"]
+        SentTrans["sentence-transformers<br/>local CPU embeddings (Groq provider)"]
+    end
+
+    Browser -->|"HTTP (same-origin)"| Static
+    Browser -->|"HTTP (same-origin)"| Routes
+    Routes --> VDB
+    Routes --> LLMChain
+    Routes --> Agent
+    Routes --> ML
+    Routes --> Auth
+
+    VDB --> Chroma
+    VDB --> SentTrans
+    Auth --> SQLite
+    ML --> Models
+    LLMChain --> LLMAPI
+    Agent --> PubMed
+```
 
 ---
 
