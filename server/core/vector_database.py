@@ -1,4 +1,5 @@
 import os
+import threading
 
 from functools import lru_cache
 from typing import List
@@ -14,6 +15,10 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from utils.logger import logger
 
 _vectorstore_cache = {}
+# Guards Chroma(...) construction: the startup warmup thread and an
+# in-flight request can otherwise race to construct a client for the same
+# persist_directory, which trips a KeyError in chromadb's SharedSystemClient.
+_vectorstore_lock = threading.Lock()
 
 
 def vectorstore_exists(persist_path: str) -> bool:
@@ -45,23 +50,24 @@ def initialize_empty_vectorstores():
         # isn't stuck paying the (multi-second) model load cost.
         embedding = get_embeddings(provider)
 
-        if not os.listdir(persist_path):
-            Chroma(
-                embedding_function=embedding,
-                persist_directory=persist_path
-            )
-            logger.debug(f"Initialized vectorstore for {provider} at {persist_path}")
+        with _vectorstore_lock:
+            if not os.listdir(persist_path):
+                Chroma(
+                    embedding_function=embedding,
+                    persist_directory=persist_path
+                )
+                logger.debug(f"Initialized vectorstore for {provider} at {persist_path}")
 
-        # Also warm the vectorstore connection cache so the first real request
-        # doesn't pay the cost of opening/loading the persisted collection.
-        # Chroma lazily loads its on-disk index on the first query rather than
-        # on construction, so run a throwaway query here to force that load now.
-        vectorstore = Chroma(persist_directory=persist_path, embedding_function=embedding)
-        try:
-            vectorstore.similarity_search("warmup", k=1)
-        except Exception:
-            pass
-        _vectorstore_cache[provider] = vectorstore
+            # Also warm the vectorstore connection cache so the first real request
+            # doesn't pay the cost of opening/loading the persisted collection.
+            # Chroma lazily loads its on-disk index on the first query rather than
+            # on construction, so run a throwaway query here to force that load now.
+            vectorstore = Chroma(persist_directory=persist_path, embedding_function=embedding)
+            try:
+                vectorstore.similarity_search("warmup", k=1)
+            except Exception:
+                pass
+            _vectorstore_cache[provider] = vectorstore
 
     logger.info("Vectorstore initialization complete.")
 
@@ -84,14 +90,18 @@ def load_vectorstore(model_provider: str):
     persist_path = VECTORSTORE_DIRECTORY[model_provider]
     logger.debug(f"Loading vectorstore from {persist_path}")
 
-    if vectorstore_exists(persist_path):
-        logger.debug(f"Loading existing vectorstore for provider: {model_provider}")
-        vectorstore = Chroma(persist_directory=persist_path, embedding_function=get_embeddings(model_provider))
-        _vectorstore_cache[model_provider] = vectorstore
-        return vectorstore
+    with _vectorstore_lock:
+        if model_provider in _vectorstore_cache:
+            return _vectorstore_cache[model_provider]
 
-    logger.debug(f"VectorStore not found for provider: {model_provider}")
-    raise ValueError(f"VectorStore not found for provider: {model_provider}")
+        if vectorstore_exists(persist_path):
+            logger.debug(f"Loading existing vectorstore for provider: {model_provider}")
+            vectorstore = Chroma(persist_directory=persist_path, embedding_function=get_embeddings(model_provider))
+            _vectorstore_cache[model_provider] = vectorstore
+            return vectorstore
+
+        logger.debug(f"VectorStore not found for provider: {model_provider}")
+        raise ValueError(f"VectorStore not found for provider: {model_provider}")
 
 def get_collections_count(model_provider: str):
     logger.debug(f"Getting collection count for provider: {model_provider}")
