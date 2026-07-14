@@ -207,14 +207,44 @@
   .modal-footer button { width:28px; height:28px; border-radius:7px; border:1px solid #C9D6DD; background:#FFFFFF; color:#45566A; font-size:12px; cursor:pointer; }
   .modal-footer button:disabled { opacity:0.4; cursor:not-allowed; }
   .modal-footer span { font-size:12.5px; color:#45566A; }
+
+  /* MOBILE */
+  .sidebar-toggle-btn { display:none; }
+  .sidebar-backdrop { display:none; }
+
+  @media (max-width: 768px) {
+    .sidebar-toggle-btn {
+      display:flex; align-items:center; justify-content:center;
+      width:36px; height:36px; border-radius:8px; border:none;
+      background:#ECF2F4; color:#16232D; font-size:16px; cursor:pointer; flex-shrink:0;
+    }
+    .sidebar {
+      position:fixed; top:0; left:0; height:100%; z-index:200;
+      transform:translateX(-100%); transition:transform 0.2s ease;
+      box-shadow:16px 0 40px rgba(22,35,45,0.14);
+    }
+    .sidebar.open { transform:translateX(0); }
+    .sidebar-backdrop.open {
+      display:block; position:fixed; inset:0; background:rgba(22,35,45,0.35); z-index:150;
+    }
+    .topbar { padding:12px 14px; }
+    .messages-inner { padding:18px 14px 12px 14px; }
+    .composer-inner { padding:0 6px; }
+    .inspector-inner { padding:20px 14px 32px 14px; }
+    .msg-user-bubble { max-width:88%; }
+    .modal-panel { width:100%; max-width:100%; }
+    .auth-modal-panel { width:92%; }
+  }
 </style>
 </head>
 <body>
 
 <div class="app">
 
+  <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="Actions.closeSidebar()"></div>
+
   <!-- SIDEBAR -->
-  <div class="sidebar">
+  <div class="sidebar" id="sidebar">
     <div class="sidebar-logo">
       <div class="badge">&#10022;</div>
       <div class="title">Pharma R&amp;D Assistant</div>
@@ -244,6 +274,7 @@
   <!-- MAIN -->
   <div class="main">
     <div class="topbar">
+      <button class="sidebar-toggle-btn" onclick="Actions.toggleSidebar()">&#9776;</button>
       <div class="seg-control">
         <button id="tabChat" class="active" onclick="Actions.selectView('chat')">Chat</button>
         <button id="tabInspector" onclick="Actions.selectView('inspector')">Inspector</button>
@@ -428,6 +459,7 @@
 
   const State = {
     view: "chat",
+    sidebarOpen: false,
     provider: DEFAULT_PROVIDER,
     model: DEFAULT_MODEL,
     chatReady: true,
@@ -762,6 +794,9 @@
     document.getElementById("inspectorView").style.minHeight = "0";
     document.getElementById("inspectorView").style.overflow = "hidden";
 
+    document.getElementById("sidebar").className = "sidebar" + (State.sidebarOpen ? " open" : "");
+    document.getElementById("sidebarBackdrop").className = "sidebar-backdrop" + (State.sidebarOpen ? " open" : "");
+
     document.getElementById("utilMenu").style.display = State.utilMenuOpen ? "flex" : "none";
     document.getElementById("attachPopover").className = "popover attach" + (State.attachMenuOpen ? " open" : "");
     document.getElementById("modelPopover").className = "popover model" + (State.modelMenuOpen ? " open" : "");
@@ -813,6 +848,14 @@
 
   // ---------- ACTIONS ----------
   const Actions = {
+    toggleSidebar() {
+      State.sidebarOpen = !State.sidebarOpen;
+      render();
+    },
+    closeSidebar() {
+      State.sidebarOpen = false;
+      render();
+    },
     toggleUtilMenu() {
       State.utilMenuOpen = !State.utilMenuOpen;
       State.modelMenuOpen = false; State.attachMenuOpen = false;
@@ -950,10 +993,12 @@
     newChat() {
       State.messages = [];
       State.currentSessionId = null;
+      State.sidebarOpen = false;
       render();
     },
 
     async loadSession(id) {
+      State.sidebarOpen = false;
       if (State.user) {
         try {
           const messages = await apiGet("/chat_sessions/" + id + "/messages");
